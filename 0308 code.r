@@ -1,12 +1,20 @@
 ########## DA401 project #########
 ########## 3/8/2021 ##########
 library(dplyr)
+library(tidyverse)
 library(tidyr)
 library(ggplot2)
 library(cluster)
 library(factoextra)
 library(psych)
 library(corrplot)
+library(fpc)
+library(GGally)
+library(regclass)
+library(ggpubr)
+library(mctest)
+library(car)
+library(olsrr)
 ######################### Data exploration ############################
 ############ Data cleaning ############
 # Load data
@@ -21,11 +29,12 @@ summary(covid_data)
 dplyr::glimpse(covid_data)
 
 # variabes end with _txt and Final_open contains text have many NAs
-covid_data <- rename(covid_data, "answer_duration" = "Duration..in.seconds.")
 covid_data <-  subset(covid_data, select = -c(Final_open, Expl_coping_txt, time_spent_in_war_TXT, experience_war_TXT, 
-                                            born_92, experience_war, war_injury, loss_during_war, time_spent_in_war))
+                                              born_92, experience_war, war_injury, loss_during_war, time_spent_in_war))
 
-#covid_data_no_na <- covid_data %>% filter(answered_all == "Yes")
+covid_data <- rename(covid_data, "answer_duration" = "Duration..in.seconds.")
+
+
 #write.csv(covid_data_no_na, "G:/My Drive/Spring 2022/DA 401/COVID Data/COVIDiSTRESS_noNA.csv", row.names = FALSE) # export csv file 
 
 # only 79 replies to born_92
@@ -39,32 +48,28 @@ covid_data <-  subset(covid_data, select = -c(Final_open, Expl_coping_txt, time_
 
 
 # Create dataset of all variables for RQ1
-allCharacteristics <- covid_data %>% select("OECD_people_1", "OECD_people_2", 
-                                            "OECD_insititutions_1", "OECD_insititutions_2", "OECD_insititutions_3", "OECD_insititutions_4", "OECD_insititutions_5", "OECD_insititutions_6", 
-                                            "Trust_countrymeasure",
-                                            "Compliance_1", "Compliance_2", "Compliance_3", "Compliance_4", "Compliance_5",
-                                            "BFF_15_1", "BFF_15_2", "BFF_15_3", "BFF_15_4",
-                                            "BFF_15_5", "BFF_15_6", "BFF_15_7", "BFF_15_8",
-                                            "BFF_15_9", "BFF_15_10", "BFF_15_11", "BFF_15_12",
-                                            "Corona_concerns_1", "Corona_concerns_2", "Corona_concerns_3", "Corona_concerns_4", "Corona_concerns_5",
-                                            "Expl_Distress_1", "Expl_Distress_2", "Expl_Distress_3",
-                                            "Expl_Distress_4", "Expl_Distress_5", "Expl_Distress_6",
-                                            "Expl_Distress_7", "Expl_Distress_8", "Expl_Distress_9",
-                                            "Expl_Distress_10", "Expl_Distress_11", "Expl_Distress_12",
-                                            "Expl_Distress_13", "Expl_Distress_14", "Expl_Distress_15",
-                                            "Expl_Distress_16", "Expl_Distress_17", "Expl_Distress_18",
-                                            "Expl_Distress_19", "Expl_Distress_20", "Expl_Distress_21",
-                                            "Expl_Distress_22", "Expl_Distress_23", "Expl_Distress_24",
-                                            "PSS10_avg", "SLON3_avg", "SPS_avg", "answer_duration")
+behaviours <- covid_data %>% select("Trust_countrymeasure",
+                                    "Compliance_1", "Compliance_2", "Compliance_3", "Compliance_4", "Compliance_5",
+                                    "Corona_concerns_1", "Corona_concerns_2", "Corona_concerns_3", "Corona_concerns_4", "Corona_concerns_5",
+                                    "PSS10_avg", "SLON3_avg", "answer_duration")
 
 # delete rows with NAs values
-allCharacteristics <- allCharacteristics[complete.cases(allCharacteristics),]
+behaviours <- behaviours[complete.cases(behaviours),]
 
-# transfer answer duration from seconds to minutes
-allCharacteristics$answer_duration_mins <- (allCharacteristics$answer_duration)/60
+behaviours$answer_duration_mins <- (behaviours$answer_duration)/60
+
+behaviours <- behaviours %>% filter(answer_duration_mins >= 3)
+
+## detect multivariate outliers due to random or careless invalid response ##
+## using Mahalanobis and chi-square test ##
+
+behaviours$maha <- mahalanobis(behaviours, colMeans(behaviours), cov(behaviours), tol = 1e-40)
+behaviours$p_chi_square <- pchisq(behaviours$maha, df = 3, lower.tail = FALSE)
+behavior_removed <- behaviours %>% filter(p_chi_square < 0.001)
+behavior_removed <- subset(behavior_removed, select = -c(p_chi_square, maha))
 
 # histogram of answer duration to see distribution 
-ggplot(allCharacteristics, aes(answer_duration_mins)) + 
+ggplot(behaviours, aes(answer_duration_mins)) + 
   geom_histogram(color = "black", fill = "white", binwidth = 1) +
   xlim(0,60) + 
   labs(title = "Histogram of answer duration in minutes", 
@@ -74,65 +79,72 @@ ggplot(allCharacteristics, aes(answer_duration_mins)) +
   theme_bw()
 
 # explore allCharacteristics
-summary(allCharacteristics)
-ncol(allCharacteristics) # have 73 columns
-str(allCharacteristics) # view columns' data type
+summary(behaviours)
+str(behaviours) # view columns' data type
 
 ### Data Cleaning ###
 
-# filter out responses who completed the survey under 1/10th of estimation answer duration 
-allCharacteristics <- allCharacteristics %>% filter(answer_duration_mins >= 3)
-
-
 # create dataframe having mean scores of all sub-survey
-all_char_avg <- allCharacteristics %>% select("PSS10_avg", "SLON3_avg", "Trust_countrymeasure")
-all_char_avg$trust_in_ppl <- rowMeans(subset(allCharacteristics, select = c("OECD_people_1", "OECD_people_2")), na.rm = TRUE)
-all_char_avg$trust_in_gov <- rowMeans(subset(allCharacteristics, select = c("OECD_insititutions_1", "OECD_insititutions_2", "OECD_insititutions_3", "OECD_insititutions_4", "OECD_insititutions_5", "OECD_insititutions_6")), na.rm = TRUE)
-all_char_avg$trust_in_gov <- rowMeans(subset(allCharacteristics, select = c("Compliance_1", "Compliance_2", "Compliance_3", "Compliance_4", "Compliance_5")), na.rm = TRUE)
-all_char_avg$trust_in_gov <- rowMeans(subset(allCharacteristics, select = c("BFF_15_1", "BFF_15_2", "BFF_15_3", "BFF_15_4",
-                                                                            "BFF_15_5", "BFF_15_6", "BFF_15_7", "BFF_15_8",
-                                                                            "BFF_15_9", "BFF_15_10", "BFF_15_11", "BFF_15_12")), na.rm = TRUE)
-all_char_avg$corona_concern <- rowMeans(subset(allCharacteristics, select = c("Corona_concerns_1", "Corona_concerns_2", "Corona_concerns_3", "Corona_concerns_4", "Corona_concerns_5")), na.rm = TRUE)
+behaviours_score <-  behavior_removed %>% select("PSS10_avg", "SLON3_avg", "Trust_countrymeasure")
+behaviours_score$compliance <- rowMeans(subset(behavior_removed, select = c("Compliance_1", "Compliance_2", "Compliance_3", "Compliance_4", "Compliance_5")), na.rm = TRUE)
+behaviours_score$corona_concern <- rowMeans(subset(behavior_removed, select = c("Corona_concerns_1", "Corona_concerns_2", "Corona_concerns_3", "Corona_concerns_4", "Corona_concerns_5")), na.rm = TRUE)
 
+boxplot(behaviours_score)
 
-# create dataframe with no measure of stress and loneliness 
-no_pss_slon <- allCharacteristics %>% select("Trust_countrymeasure")
-no_pss_slon$trust_in_ppl <- rowMeans(subset(allCharacteristics, select = c("OECD_people_1", "OECD_people_2")), na.rm = TRUE)
-no_pss_slon$trust_in_gov <- rowMeans(subset(allCharacteristics, select = c("OECD_insititutions_1", "OECD_insititutions_2", "OECD_insititutions_3", "OECD_insititutions_4", "OECD_insititutions_5", "OECD_insititutions_6")), na.rm = TRUE)
-no_pss_slon$trust_in_gov <- rowMeans(subset(allCharacteristics, select = c("Compliance_1", "Compliance_2", "Compliance_3", "Compliance_4", "Compliance_5")), na.rm = TRUE)
-no_pss_slon$trust_in_gov <- rowMeans(subset(allCharacteristics, select = c("BFF_15_1", "BFF_15_2", "BFF_15_3", "BFF_15_4",
-                                                                            "BFF_15_5", "BFF_15_6", "BFF_15_7", "BFF_15_8",
-                                                                            "BFF_15_9", "BFF_15_10", "BFF_15_11", "BFF_15_12")), na.rm = TRUE)
-no_pss_slon$corona_concern <- rowMeans(subset(allCharacteristics, select = c("Corona_concerns_1", "Corona_concerns_2", "Corona_concerns_3", "Corona_concerns_4", "Corona_concerns_5")), na.rm = TRUE)
+# function remove outliers
+detect_outlier <- function(x) {
+  
+  # calculate first quantile
+  Quantile1 <- quantile(x, probs=.25)
+  
+  # calculate third quantile
+  Quantile3 <- quantile(x, probs=.75)
+  
+  # calculate inter quartile range
+  IQR = Quantile3-Quantile1
+  
+  # return true or false
+  x > Quantile3 + (IQR*1.5) | x < Quantile1 - (IQR*1.5)
+}
 
+# create remove outlier function
+remove_outlier <- function(dataframe,
+                            columns=names(dataframe)) {
+  
+  # for loop to traverse in columns vector
+  for (col in columns) {
+    
+    # remove observation if it satisfies outlier function
+    dataframe <- dataframe[!detect_outlier(dataframe[[col]]), ]
+  }
+  
+  # return dataframe
+  print("Remove outliers")
+  print(dataframe)
+}
 
+no_outlier_beh <- remove_outlier(behaviours_score, c('PSS10_avg', 'compliance', 'corona_concern')) #remove over 2000 outlier observations
 
+boxplot(no_outlier_beh)
 
-## detect multivariate outliers due to random or careless invalid response ##
-## using Mahalanobis and chi-square test ##
-
-# for dataframe of all mean scores
-all_char_avg$mahalnobis <- mahalanobis(all_char_avg, colMeans(all_char_avg), cov(all_char_avg))
-all_char_avg$p_chi_square <- pchisq(all_char_avg$mahalnobis, df = 3, lower.tail = FALSE)
-all_char_avg <- all_char_avg %>% filter(p_chi_square < 0.001)
-all_char_avg <- subset(all_char_avg, select = -c(p_chi_square, mahalnobis))
-
-
-# for dataframe without perceived stress and loneliness
-no_pss_slon$mahal <- mahalanobis(no_pss_slon, colMeans(no_pss_slon), cov(no_pss_slon))
-no_pss_slon$p_chi_square <- pchisq(no_pss_slon$mahal, df = 3, lower.tail = FALSE) 
-df1 <- no_pss_slon %>% filter(p_chi_square < 0.001)
-df1 <- subset(df1, select = -c(p_chi_square, mahalnobis))
 
 # Export into csv file for RQ1
+#write.csv(maha_outlier_removed, "G:/My Drive/Spring 2022/DA 401/COVID Data/mahaDist_outlier_removed.csv", row.names = F)
+#write.csv(behaviour_outlier_removed, "G:/My Drive/Spring 2022/DA 401/COVID Data/behaviour_outlier_removed.csv", row.names = F)
 #write.csv(df1, "G:/My Drive/Spring 2022/DA 401/COVID Data/all_characteristics_cleaned.csv", row.names = F)
 #write.csv(all_char_avg, "G:/My Drive/Spring 2022/DA 401/COVID Data/cluster_all_characteristics_avg_score.csv", row.names = F)
 #write.csv(df1, "G:/My Drive/Spring 2022/DA 401/COVID Data/cluster_noPSS_noSLON_avg_score.csv", row.names = F)
 
 ### EDA ###
+#maha_outlier_removed <- read.csv("G:/My Drive/Spring 2022/DA 401/COVID Data/mahaDist_outlier_removed.csv")
+
 # Check correlation between independent variables 
-all_char_avg.cor = cor(all_char_avg, method = c("spearman"))
-corrplot(all_char_avg.cor, method = "number")
+behaviour_outlier_removed.cor = cor(no_outlier_beh, method = c("spearman"))
+corrplot(behaviour_outlier_removed.cor, method = "number")
+
+# Demographics characteristics
+
+# Behaviours associated with characteristics
 
 #######################################################################
 
@@ -140,105 +152,204 @@ corrplot(all_char_avg.cor, method = "number")
 ### PCA to reduce number of dimensions ###
 
 ### For dataframe have perceived stress and loneliness ###
-pca_avg = prcomp(all_char_avg, center = TRUE, scale = TRUE)
-pca_avg
-summary(pca_avg)
-
-# PC1, PC2, and PC3 explains for 60% of the variance of the data, which is sufficient to choose 
-
-# Saving only 3 columns with the highest proportion of variance in all_char_avg 
-all_char_transform = as.data.frame(-pca_avg$x[,1:3])
+pca_beh = prcomp(no_outlier_beh, center = TRUE, scale = TRUE)
+summary(pca_beh) # 3 variables explain for 77% of the data variance
 
 # extract results for variables
-var <- get_pca_var(pca_avg)
-names(var) #4 matricesthat contain all results of the active variables are coordinates, correlation between variables and axes, square cosine and contributions
+var <- get_pca_var(pca_beh)
 
 # coordinates of variables
-head(var$coord)
+head(var$coord) # 3 important variables are perceived stress, compliance, and corona concern
 
-### For dataframe doesn't have perceived stress and loneliness ###
-pca_none = prcomp(df1, center = TRUE, scale = TRUE)
-summary(pca_none) # PC1, PC2, and PC3 cummulative explains for 65% of the variance of the data
-
-# Saving 3 columns with the highest proportion of variance
-df1_transform = as.data.frame(-pca_none$x[,1:3])
-
+# Saving only 3 columns with the highest proportion of variance in all_char_avg 
+all_char_transform = as.data.frame(-pca_beh$x[,1:3])
 
 ### K-Means Clustering ###
 ### Dataframe with stress and loneliness ###
+
 # Determine number of clusters k using elbow method 
-fviz_nbclust(all_char_transform, kmeans, method = 'wss') + 
-  geom_vline(xintercept = 3, linetype = 2) +
-  labs(subtitle = "Elbow method")# the bend of the elbow is at k=3
+# Use map_dbl to run many models with varying value of k (centers)
 
-# Determine number of clusters k using silhouette method 
-fviz_nbclust(all_char_transform, kmeans, method = 'silhouette') +
-  labs(subtitle = "Silhoutte method") #k = 5 has best quality of clustering (how well each object lies within its cluster)
+tot_withinss <- map_dbl(1:10,  function(k){
+  model <- kmeans(x = all_char_transform, centers = k)
+  model$tot.withinss
+})
 
-# Determine number of clusters k using gap statistic method 
-set.seed(123)
-fviz_nbclust(all_char_transform, kmeans, method = 'gap_stat', nboot = 50) + 
-  labs(subtitle = 'Gap statistic method') #  recommend using 1 cluster? or 7 clusters
-# this method compares the total within intra-cluster variation 
-# for different values of k with their expected values under null reference distribution of the data
-# optimal cluster will be the value maximize the gap statistic
+# Generate a data frame containing both k and tot_withinss
+elbow_df <- data.frame(
+  k = 1:10,
+  tot_withinss = tot_withinss
+)
+
+
+# Plot the elbow plot
+ggplot(elbow_df, aes(x = k, y = tot_withinss)) +
+  geom_line() + geom_point()+
+  scale_x_continuous(breaks = 1:10)+ 
+  labs(title = "Optimal number of clusters for behavior response to COVID-19", 
+       subtitle = "Optimal number of cluster is 3") + 
+  ylab("Within cluster sum of squares") + 
+  xlab("k (Number of clusters)") + 
+  theme_minimal()
 
 # K-means clustering
-k = 3 # choosing k = 2
+k = 3 # choosing k = 3
 
 kmeans_all_char = kmeans(all_char_transform, centers = k, nstart = 50)
 
-fviz_cluster(kmeans_all_char, data = all_char_transform, geom = "point") + 
+fviz_cluster(kmeans_all_char, data = all_char_transform, geom = "point", ggtheme = theme_minimal()) + 
   labs(title = "Clusters of participants' behavioural characteristics at the beginning of COVID", 
        subtitle = "K-means clustering, k = 3")
 
-### Dataframe without stress and loneliness ###
-# Determine nnumber of clusters k using elbow method 
-fviz_nbclust(df1_transform, kmeans, method = 'wss')
+#### Descriptive characteristics of cluster profiles ####
+no_outlier_beh$cluster <- kmeans_all_char$cluster
 
-# Determine number of clusters k using silhouette method 
-fviz_nbclust(df1_transform, kmeans, method = 'silhouette')
+cluster_char <- no_outlier_beh %>% group_by(cluster) %>% 
+  summarise(mean_stress = mean(PSS10_avg), 
+            mean_alone = mean(SLON3_avg),
+            mean_trust_country = mean(Trust_countrymeasure),
+            mean_compliance = mean(compliance),
+            mean_corona_concern = mean(corona_concern),
+            count = n())
 
-# Determine number of clusters k using gap statistic method 
-set.seed(123)
-fviz_nbclust(df1_transform, kmeans, method = 'gap_stat', nboot = 50)
 
-# K-means clustering
-k1 = 3 # choosing k = 4
 
-kmeans_df1 = kmeans(df1, centers = k1, nstart = 50)
+## ANOVA to compare characteristics of 3 clusters 
+stress.aov <- aov(mean_stress ~ cluster, data = cluster_char)
+summary(stress.aov)
 
-fviz_cluster(kmeans_df1, data = df1, geom = "point")
+alone.aov <- aov(mean_alone ~ cluster, data = cluster_char)
+summary(alone.aov)
 
-# Identify cluster characteristics
+trustCountry.aov <- aov(mean_trust_country ~ cluster, data = cluster_char)
+summary(trustCountry.aov)
+
+compliance.aov <- aov(mean_compliance ~ cluster, data = cluster_char)
+summary(compliance.aov)
+
+coronaConcern.aov <- aov(mean_corona_concern ~ cluster, data = cluster_char)
+summary(coronaConcern.aov)
 # Identify datapoints that are in overlap of 2 or more clusters
+
+
 #######################################################################
 
 ######################### Script for RQ2 ##############################
 
 ### Join Covid table with GDP table ###
+gni_data <- read.csv("G:/My Drive/Spring 2022/DA 401/COVID Data/API_NY.GDP.PCAP.CD_DS2_en_csv_v2_3731360.csv",fileEncoding="UTF-8-BOM")
+income_tag <- read.csv("G:/My Drive/Spring 2022/DA 401/COVID Data/Metadata_Country_API_NY.GDP.PCAP.CD_DS2_en_csv_v2_3731360.csv", fileEncoding="UTF-8-BOM")
+
+# rename column "country" in gdp_data
+gni_data <- rename(gni_data, c(Country = Country.Name, Code = Country.Code))
 
 # have income group in Covid table
+covid_data$answer_duration_mins <- (covid_data$answer_duration)/60
+covid_data <- covid_data %>% filter(answer_duration_mins >= 3)
 
-### Divide datasets ###
+covid_data$Code <- gni_data$Code[ match(covid_data$Country, gni_data$Country)]
+covid_data$income_group <- income_tag$IncomeGroup[ match(covid_data$Code, income_tag$Country.Code)]
+
+
+
+# Extract socioeconomics variables
+socio_econ <- covid_data %>% select("Dem_age", "Dem_gender", 
+                                    "Dem_edu", "Dem_employment", 
+                                    "Country", "Dem_maritalstatus", 
+                                    "Dem_dependents", "Dem_riskgroup", "PSS10_avg", "income_group")
+
+socio_econ <- socio_econ[complete.cases(socio_econ),]
+
+socio_econ$income_tag <- ifelse(socio_econ$income_group == "High income" | socio_econ$income_group == 'Upper middle income', "Developed", "Developing")
+
+socio_econ <- socio_econ %>% filter(Dem_isolation != "1")
+
+# write.csv(socio_econ, "G:/My Drive/Spring 2022/DA 401/COVID Data/SocioEconomics factors.csv", row.names = F)
+
+
+socio_econ <- read.csv("G:/My Drive/Spring 2022/DA 401/COVID Data/SocioEconomics factors.csv")
+### Summary statistics
+summary(socio_econ)
+glimpse(socio_econ)
+unique(socio_econ$Dem_edu)
+socio_econ <- socio_econ %>% mutate(Dem_edu = recode(Dem_edu, "College degree, bachelor, master" = "Bachelor degree above",
+                                                     "Some College, short continuing education or equivalent" = "Some College", 
+                                                     "Up to 12 years of school" =  "Up to 12 years", 
+                                                     "Up to 9 years of school" = "Up to 9 years",
+                                                     "Up to 6 years of school" = "Up to 6 years",
+                                                     "PhD/Doctorate" = 'PhD level'
+                                                     ))
+
+unique(socio_econ$Dem_edu_mom)
+socio_econ <- socio_econ %>% mutate(Dem_edu_mom = recode(Dem_edu_mom, "Some College or equivalent" = "Some College",
+                                                         "PhD/Doctorate" = "PhD level",
+                                                         "Up to 12 years of school" =  "Up to 12 years", 
+                                                         "Up to 9 years of school" = "Up to 9 years",
+                                                         "Up to 6 years of school" = "Up to 6 years"
+                                                         ))
+
+unique(socio_econ$Dem_maritalstatus)
+
+socio_econ %>% count(income_group)
+socio_econ %>% count(income_tag)
+
+# EDA
+ggplot(socio_econ, aes(x = Dem_age)) + 
+  geom_histogram(aes(fill = Dem_gender), col = "black") +
+  xlim(15,90)
+
+ggplot(socio_econ, aes(x = Dem_edu, y = Dem_age)) + 
+  geom_col(aes(fill = Dem_gender), coll = "black") +
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))
+
+ggplot(socio_econ, aes(x = Dem_edu, y = PSS10_avg)) +
+  geom_boxplot()
+
+ggplot(socio_econ, aes(x = Dem_age, y = PSS10_avg)) +
+  geom_point() + 
+  geom_smooth(method='lm', formula= y~x)
+
+socio_econ_1 <- subset(socio_econ, select = -c(Country, income_group))
+ggpairs(socio_econ_1)
+
 
 ### Build training model ###
 
-######################## Decision tree ###############################
-### Test training model on validated set ###
+## Linear regression model of all countries ##
+mod1 <- lm(PSS10_avg ~ Dem_age + Dem_gender + Dem_employment + Dem_edu + Dem_dependents + Dem_riskgroup + income_group, data = socio_econ)
+summary(mod1)
 
-### Test revised model on test set ###
+par(mfrow=c(2,2))
+plot(mod1)
 
-### Validation test
+ols_vif_tol(mod1)
 
-######################## Random forest ###############################
-### Test training model on validated set ###
+## Linear regression model of developed countries ##
+developed <- socio_econ %>% filter(income_tag == "Developed")
+mod2 <- lm(PSS10_avg ~ Dem_age + Dem_gender + Dem_employment + Dem_edu + Dem_dependents + Dem_riskgroup + income_group, data = developed)
+summary(mod2)
 
-### Test revised model on test set ###
+par(mfrow=c(2,2))
+plot(mod2)
 
-### Validation test ###
+ols_vif_tol(mod2)
 
-######################## Generalized linear model ####################
-### Test training model on validated set ###
+# List out number of response in each country 
+developed_response <- developed %>% group_by(income_tag) %>%
+  count(Country) %>% 
+  arrange(desc(n))
 
-### Test revised model on test set ###
+## Linear regression model of developing countries
+developing <- socio_econ %>% filter(income_tag == "Developing")
+mod3 <- lm(PSS10_avg ~ Dem_age + Dem_gender + Dem_employment + Dem_edu + Dem_dependents + Dem_riskgroup + income_group, data = developing)
+summary(mod3)
+
+par(mfrow=c(2,2))
+plot(mod3)
+
+ols_vif_tol(mod3)
+
+# List out number of response in each country 
+developing_response <- developing %>% group_by(income_tag) %>%
+  count(Country) %>% 
+  arrange(desc(n))
